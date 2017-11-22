@@ -48,7 +48,6 @@ func (st *SecureTransport) WriteToRemote(b []byte) (int, error) {
 	if st.crypto != nil && st.kind == Local {
 		b = st.crypto.Encrypto(b)
 	}
-
 	n, err := st.remote.Write(b)
 	if err != nil {
 		log.Println(err)
@@ -57,6 +56,7 @@ func (st *SecureTransport) WriteToRemote(b []byte) (int, error) {
 }
 
 func (st *SecureTransport) WriteToClient(b []byte) (int, error) {
+	// log.Println(b)
 	if st.crypto != nil && st.kind == Server {
 		b = st.crypto.Encrypto(b)
 	}
@@ -79,6 +79,7 @@ func (st *SecureTransport) ReadFromRemote() ([]byte, error) {
 	if st.crypto != nil && st.kind == Local {
 		data = st.crypto.Decrypto(b[:n])
 	}
+
 	return data, err
 }
 
@@ -90,9 +91,12 @@ func (st *SecureTransport) ReadFromClient() ([]byte, error) {
 	}
 
 	data := b[:n]
+	// log.Println(data)
 	if st.crypto != nil && st.kind == Server {
 		data = st.crypto.Decrypto(b[:n])
 	}
+
+	// log.Println(string(data))
 
 	return data, err
 }
@@ -113,7 +117,10 @@ func (st *SecureTransport) Pipe() {
 			if err != nil {
 				break
 			}
-			st.WriteToClient(b)
+			_, err = st.WriteToClient(b)
+			if err != nil {
+				break
+			}
 		}
 	}()
 
@@ -123,11 +130,14 @@ func (st *SecureTransport) Pipe() {
 		if err != nil {
 			break
 		}
-		st.WriteToRemote(b)
+		_, err = st.WriteToRemote(b)
+		if err != nil {
+			break
+		}
 	}
 }
 
 func (st *SecureTransport) Close() {
-	st.client.Close()
+	// st.client.Close()
 	st.remote.Close()
 }

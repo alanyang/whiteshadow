@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	// "io"
+	// "bufio"
 	"log"
 	"net"
 	"strconv"
@@ -13,16 +14,24 @@ import (
 )
 
 const (
-	Sock5Version = 0x5
-
-	CmdConnect byte = iota
-	CmdBind
-	CmdUdpAssociate
-	CmdRsv
+	Sock5Version     = 0x5
+	Sock5DefaultPort = 1080
 
 	AddressTypeIpv4   = 0x1
 	AddressTypeDomain = 0x3
 	AddressTypeIpv6   = 0x4
+)
+
+const (
+	CmdConnect byte = iota + 1
+	CmdBind
+	CmdUdpAssociate
+	CmdRsv
+)
+
+const (
+	ProtocolTypeSock5 = iota
+	ProtocolTypeShadowsocks
 )
 
 type (
@@ -38,6 +47,8 @@ type (
 		remoteAddress    string
 		remoteAddressRaw []byte
 		transport        Transporter
+		crypto           Crypto
+		kind             Kind
 	}
 )
 
@@ -45,11 +56,27 @@ func NewServerProtocol(conn net.Conn) Protocol {
 	sp := &serverProtocol{
 		conn: conn,
 	}
-	sp.processor = sp.handshake
+	if ServerConfig.Port == Sock5DefaultPort {
+		// for sock5 protocol
+		log.Println("Sock5")
+		sp.processor = sp.handshake
+		sp.kind = ProtocolTypeSock5
+	} else {
+		// for shadowsocks protocol
+		log.Println("Shadowsocks")
+		sp.processor = sp.shadowRequest
+		sp.kind = ProtocolTypeShadowsocks
+	}
 	return sp
 }
 
 func (sp *serverProtocol) Process() {
+	// defer func() {
+	// 	if r := recover(); r != nil {
+	// 		log.Println(r)
+	// 	}
+	// }()
+
 	for {
 		b := make([]byte, ServerConfig.TcpBufferSize)
 		n, err := sp.conn.Read(b)
@@ -67,28 +94,23 @@ func (sp *serverProtocol) Process() {
 
 				if err != nil {
 					sp.conn.Write([]byte{Sock5Version, 0x04, 0x00, AddressTypeIpv4})
-					// sp.conn.Write(sp.remoteAddressRaw)
 					goto CLOSE
 				}
-				resp := []byte{Sock5Version, 0x00, 0x00, AddressTypeIpv4}
-				resp = append(resp, sp.remoteAddressRaw...)
-				log.Println(resp)
-				// sp.conn.Write([]byte{Sock5Version, 0x00, 0x00, AddressTypeIpv4})
-				// sp.conn.Write(sp.remoteAddressRaw)
-				sp.conn.Write(resp)
+				if sp.kind == ProtocolTypeSock5 {
+					sp.conn.Write([]byte{Sock5Version, 0x00, 0x00, AddressTypeIpv4})
+					sp.conn.Write(sp.remoteAddressRaw)
+				} else if sp.kind == ProtocolTypeShadowsocks {
+					// sp.conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x08, 0x43})
+				}
 
 				log.Printf("Connect to remote %s", sp.remoteAddress)
-				// cipher, err := NewRc4Md5Crypto(ServerConfig.User.Password)
-				// if err != nil {
-				// 	goto CLOSE
-				// }
-				sp.transport = NewSecureTransport(remote, sp.conn, Server, nil)
-				break
+
+				sp.transport = NewSecureTransport(remote, sp.conn, Server, sp.crypto)
+				sp.transport.Pipe()
 			}
 		} else {
-			log.Println(err)
-			sp.conn.Close()
-			break
+			log.Println("goto close", err)
+			goto CLOSE
 		}
 	}
 
@@ -107,7 +129,7 @@ func (sp *serverProtocol) handshake(b []byte) (processor, error) {
 		return nil, errors.New("Is not sock5 protocol")
 	}
 
-	if ServerConfig.User != nil {
+	if sp.kind == ProtocolTypeSock5 && ServerConfig.User != nil && ServerConfig.User.Name != "" {
 		sp.conn.Write([]byte{Sock5Version, AuthPassword})
 		return sp.auth, nil
 	}
@@ -190,6 +212,22 @@ func (sp *serverProtocol) request(b []byte) (processor, error) {
 	}
 
 	return nil, nil
+}
+
+func (sp *serverProtocol) shadowRequest(b []byte) (processor, error) {
+	log.Println("Shadow")
+	iv := b[:Rc4Md5IvSize]
+	cipher := NewRc4Md5Crypto(ServerConfig.User.Password, iv)
+
+	sp.crypto = cipher
+	raw := sp.crypto.Decrypto(b[Rc4Md5IvSize:])
+	log.Println(string(raw))
+	d := make([]byte, 3+len(raw))
+	d[0] = Sock5Version
+	d[1] = CmdConnect
+	d[2] = 0x0
+	copy(d[3:], raw)
+	return sp.request(d)
 }
 
 func convertIP(ip string) (b []byte) {

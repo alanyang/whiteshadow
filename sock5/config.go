@@ -28,6 +28,17 @@ type (
 	}
 )
 
+func InitConfig(name, password string, port, buffsize int) {
+	ServerConfig = &serverConfig{
+		User: &AuthUser{
+			Name:     name,
+			Password: password,
+		},
+		Port:          port,
+		TcpBufferSize: buffsize,
+	}
+}
+
 func init() {
 	ServerConfig = &serverConfig{
 		User:          nil,

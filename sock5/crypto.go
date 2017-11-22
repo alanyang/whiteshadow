@@ -3,6 +3,7 @@ package sock5
 import (
 	"crypto/md5"
 	"crypto/rc4"
+	"log"
 )
 
 const (
@@ -15,12 +16,15 @@ type (
 		Encrypto([]byte) []byte
 
 		Decrypto([]byte) []byte
+
+		GetIv() []byte
 	}
 
 	Rc4Md5Crypto struct {
-		cipher *rc4.Cipher
-		key    []byte
-		iv     []byte
+		key       []byte
+		iv        []byte
+		rc4md5Key []byte
+		cipher    *rc4.Cipher
 	}
 )
 
@@ -49,26 +53,35 @@ func evpBytesToKey(password string, keyLen, ivLen int) (key, iv []byte) {
 	return
 }
 
-func NewRc4Md5Crypto(raw string) (*Rc4Md5Crypto, error) {
-	key, iv := evpBytesToKey(raw, Rc4Md5KeySize, Rc4Md5IvSize)
-	// if len(key) != Rc4Md5KeySize {
-	// 	return nil, errors.New("rc4-md5 crypto key length must be 16")
-	// }
+func NewRc4Md5Crypto(raw string, iv []byte) *Rc4Md5Crypto {
+	key, _ := evpBytesToKey(raw, Rc4Md5KeySize, Rc4Md5IvSize)
 
 	h := md5.New()
 	h.Write(key)
 	h.Write(iv)
 
-	cipher, err := rc4.NewCipher(h.Sum(nil))
+	k := h.Sum(nil)
+
+	log.Printf("%x", k)
+	cipher, err := rc4.NewCipher(k)
 	if err != nil {
-		return nil, err
+		return nil
 	}
-	return &Rc4Md5Crypto{cipher: cipher, key: key, iv: iv}, nil
+	return &Rc4Md5Crypto{cipher: cipher, key: key, iv: iv, rc4md5Key: k}
+}
+
+func (rm *Rc4Md5Crypto) md5Key() []byte {
+	h := md5.New()
+	h.Write(rm.key)
+	h.Write(rm.iv)
+	return h.Sum(nil)
 }
 
 func (rm *Rc4Md5Crypto) xor(b []byte) (d []byte) {
+	// rm.cipher.Reset()
+	cipher, _ := rc4.NewCipher(rm.md5Key())
 	d = make([]byte, len(b))
-	rm.cipher.XORKeyStream(d, b)
+	cipher.XORKeyStream(d, b)
 	return
 }
 
@@ -78,4 +91,8 @@ func (rm *Rc4Md5Crypto) Encrypto(b []byte) []byte {
 
 func (rm *Rc4Md5Crypto) Decrypto(b []byte) []byte {
 	return rm.xor(b)
+}
+
+func (rm *Rc4Md5Crypto) GetIv() []byte {
+	return rm.iv
 }
