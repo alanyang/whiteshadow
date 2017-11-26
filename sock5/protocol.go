@@ -180,7 +180,7 @@ func (sp *serverProtocol) request(b []byte) (processor, error) {
 	case AddressTypeIpv4:
 		ip := net.IPv4(b[4], b[5], b[6], b[7])
 		var port uint16
-		buf := bytes.NewBuffer(b[6:8])
+		buf := bytes.NewBuffer(b[8:10])
 		err := binary.Read(buf, binary.BigEndian, &port)
 		if err != nil {
 			return nil, err
